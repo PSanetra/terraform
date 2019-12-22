@@ -21,6 +21,10 @@ type Block struct {
 	// BlockTypes describes any nested block types that may appear directly
 	// inside the block.
 	BlockTypes map[string]*NestedBlock
+
+	// A tree of path elements to all nested values which may contain
+	// sensitive information.
+	SensitivePaths *SensitivePathElement
 }
 
 // Attribute represents a configuration attribute, within a block.
@@ -46,15 +50,6 @@ type Attribute struct {
 	// provider rather than from configuration. If combined with Optional,
 	// then the config may optionally provide an overridden value.
 	Computed bool
-
-	// Sensitive, if set to true, indicates that an attribute may contain
-	// sensitive information.
-	//
-	// At present nothing is done with this information, but callers are
-	// encouraged to set it where appropriate so that it may be used in the
-	// future to help Terraform mask sensitive information. (Terraform
-	// currently achieves this in a limited sense via other mechanisms.)
-	Sensitive bool
 }
 
 // NestedBlock represents the embedding of one block within another.
@@ -128,3 +123,8 @@ const (
 	// blocks.
 	NestingMap
 )
+
+func (b *Block) AddAttribute(name string, attr *Attribute, sensitivePaths *SensitivePathElement) {
+	b.Attributes[name] = attr
+	b.SensitivePaths = b.SensitivePaths.Add(name, sensitivePaths)
+}

@@ -23,10 +23,10 @@ import (
 // The two values must have types that conform to the given schema's implied
 // type, or this function will panic.
 func AssertObjectCompatible(schema *configschema.Block, planned, actual cty.Value) []error {
-	return assertObjectCompatible(schema, planned, actual, nil)
+	return assertObjectCompatible(schema, planned, actual, nil, schema.SensitivePaths)
 }
 
-func assertObjectCompatible(schema *configschema.Block, planned, actual cty.Value, path cty.Path) []error {
+func assertObjectCompatible(schema *configschema.Block, planned, actual cty.Value, path cty.Path, sensitivePaths *configschema.SensitivePathElement) []error {
 	var errs []error
 	if planned.IsNull() && !actual.IsNull() {
 		errs = append(errs, path.NewErrorf("was absent, but now present"))
@@ -41,21 +41,13 @@ func assertObjectCompatible(schema *configschema.Block, planned, actual cty.Valu
 		return errs
 	}
 
-	for name, attrS := range schema.Attributes {
+	for name, _ := range schema.Attributes {
 		plannedV := planned.GetAttr(name)
 		actualV := actual.GetAttr(name)
 
 		path := append(path, cty.GetAttrStep{Name: name})
-		moreErrs := assertValueCompatible(plannedV, actualV, path)
-		if attrS.Sensitive {
-			if len(moreErrs) > 0 {
-				// Use a vague placeholder message instead, to avoid disclosing
-				// sensitive information.
-				errs = append(errs, path.NewErrorf("inconsistent values for sensitive attribute"))
-			}
-		} else {
-			errs = append(errs, moreErrs...)
-		}
+		moreErrs := assertValueCompatible(plannedV, actualV, path, sensitivePaths.Get(name))
+		errs = append(errs, moreErrs...)
 	}
 	for name, blockS := range schema.BlockTypes {
 		plannedV := planned.GetAttr(name)
@@ -70,6 +62,7 @@ func assertObjectCompatible(schema *configschema.Block, planned, actual cty.Valu
 		maybeUnknownBlocks := couldHaveUnknownBlockPlaceholder(plannedV, blockS, false)
 
 		path := append(path, cty.GetAttrStep{Name: name})
+		sensitivePaths := sensitivePaths.Get(name)
 		switch blockS.Nesting {
 		case configschema.NestingSingle, configschema.NestingGroup:
 			// If an unknown block placeholder was present then the placeholder
@@ -77,7 +70,7 @@ func assertObjectCompatible(schema *configschema.Block, planned, actual cty.Valu
 			if maybeUnknownBlocks && actualV.IsNull() {
 				continue
 			}
-			moreErrs := assertObjectCompatible(&blockS.Block, plannedV, actualV, path)
+			moreErrs := assertObjectCompatible(&blockS.Block, plannedV, actualV, path, sensitivePaths)
 			errs = append(errs, moreErrs...)
 		case configschema.NestingList:
 			// A NestingList might either be a list or a tuple, depending on
@@ -108,7 +101,7 @@ func assertObjectCompatible(schema *configschema.Block, planned, actual cty.Valu
 					continue
 				}
 				actualEV := actualV.Index(idx)
-				moreErrs := assertObjectCompatible(&blockS.Block, plannedEV, actualEV, append(path, cty.IndexStep{Key: idx}))
+				moreErrs := assertObjectCompatible(&blockS.Block, plannedEV, actualEV, append(path, cty.IndexStep{Key: idx}), sensitivePaths)
 				errs = append(errs, moreErrs...)
 			}
 		case configschema.NestingMap:
@@ -127,7 +120,7 @@ func assertObjectCompatible(schema *configschema.Block, planned, actual cty.Valu
 
 					plannedEV := plannedV.GetAttr(k)
 					actualEV := actualV.GetAttr(k)
-					moreErrs := assertObjectCompatible(&blockS.Block, plannedEV, actualEV, append(path, cty.GetAttrStep{Name: k}))
+					moreErrs := assertObjectCompatible(&blockS.Block, plannedEV, actualEV, append(path, cty.GetAttrStep{Name: k}), sensitivePaths)
 					errs = append(errs, moreErrs...)
 				}
 				if !maybeUnknownBlocks { // new blocks may appear if unknown blocks were present in the plan
@@ -154,7 +147,7 @@ func assertObjectCompatible(schema *configschema.Block, planned, actual cty.Valu
 						continue
 					}
 					actualEV := actualV.Index(idx)
-					moreErrs := assertObjectCompatible(&blockS.Block, plannedEV, actualEV, append(path, cty.IndexStep{Key: idx}))
+					moreErrs := assertObjectCompatible(&blockS.Block, plannedEV, actualEV, append(path, cty.IndexStep{Key: idx}), sensitivePaths)
 					errs = append(errs, moreErrs...)
 				}
 			}
@@ -163,8 +156,8 @@ func assertObjectCompatible(schema *configschema.Block, planned, actual cty.Valu
 				continue
 			}
 
-			setErrs := assertSetValuesCompatible(plannedV, actualV, path, func(plannedEV, actualEV cty.Value) bool {
-				errs := assertObjectCompatible(&blockS.Block, plannedEV, actualEV, append(path, cty.IndexStep{Key: actualEV}))
+			setErrs := assertSetValuesCompatible(plannedV, actualV, path, sensitivePaths, func(plannedEV, actualEV cty.Value) bool {
+				errs := assertObjectCompatible(&blockS.Block, plannedEV, actualEV, append(path, cty.IndexStep{Key: actualEV}), sensitivePaths)
 				return len(errs) == 0
 			})
 			errs = append(errs, setErrs...)
@@ -194,7 +187,7 @@ func assertObjectCompatible(schema *configschema.Block, planned, actual cty.Valu
 	return errs
 }
 
-func assertValueCompatible(planned, actual cty.Value, path cty.Path) []error {
+func assertValueCompatible(planned, actual cty.Value, path cty.Path, sensitivePaths *configschema.SensitivePathElement) []error {
 	// NOTE: We don't normally use the GoString rendering of cty.Value in
 	// user-facing error messages as a rule, but we make an exception
 	// for this function because we expect the user to pass this message on
@@ -206,7 +199,7 @@ func assertValueCompatible(planned, actual cty.Value, path cty.Path) []error {
 		return errs
 	}
 	if problems := planned.Type().TestConformance(actual.Type()); len(problems) > 0 {
-		errs = append(errs, path.NewErrorf("wrong final value type: %s", convert.MismatchMessage(actual.Type(), planned.Type())))
+		errs = appendValueErrors(path, sensitivePaths, errs, path.NewErrorf("wrong final value type: %s", convert.MismatchMessage(actual.Type(), planned.Type())))
 		// If the types don't match then we can't do any other comparisons,
 		// so we bail early.
 		return errs
@@ -222,11 +215,11 @@ func assertValueCompatible(planned, actual cty.Value, path cty.Path) []error {
 		if planned.IsNull() {
 			return nil
 		}
-		errs = append(errs, path.NewErrorf("was %#v, but now null", planned))
+		errs = appendValueErrors(path, sensitivePaths, errs, path.NewErrorf("was %#v, but now null", planned))
 		return errs
 	}
 	if planned.IsNull() {
-		errs = append(errs, path.NewErrorf("was null, but now %#v", actual))
+		errs = appendValueErrors(path, sensitivePaths, errs, path.NewErrorf("was null, but now %#v", actual))
 		return errs
 	}
 
@@ -234,30 +227,30 @@ func assertValueCompatible(planned, actual cty.Value, path cty.Path) []error {
 	switch {
 
 	case !actual.IsKnown():
-		errs = append(errs, path.NewErrorf("was known, but now unknown"))
+		errs = appendValueErrors(path, sensitivePaths, errs, path.NewErrorf("was known, but now unknown"))
 
 	case ty.IsPrimitiveType():
 		if !actual.Equals(planned).True() {
-			errs = append(errs, path.NewErrorf("was %#v, but now %#v", planned, actual))
+			errs = appendValueErrors(path, sensitivePaths, errs, path.NewErrorf("was %#v, but now %#v", planned, actual))
 		}
 
 	case ty.IsListType() || ty.IsMapType() || ty.IsTupleType():
 		for it := planned.ElementIterator(); it.Next(); {
 			k, plannedV := it.Element()
 			if !actual.HasIndex(k).True() {
-				errs = append(errs, path.NewErrorf("element %s has vanished", indexStrForErrors(k)))
+				errs = appendValueErrors(path, sensitivePaths, errs, path.NewErrorf("element %s has vanished", indexStrForErrors(k)))
 				continue
 			}
 
 			actualV := actual.Index(k)
-			moreErrs := assertValueCompatible(plannedV, actualV, append(path, cty.IndexStep{Key: k}))
-			errs = append(errs, moreErrs...)
+			moreErrs := assertValueCompatible(plannedV, actualV, append(path, cty.IndexStep{Key: k}), sensitivePaths.GetDynamic())
+			errs = appendValueErrors(path, sensitivePaths, errs, moreErrs...)
 		}
 
 		for it := actual.ElementIterator(); it.Next(); {
 			k, _ := it.Element()
 			if !planned.HasIndex(k).True() {
-				errs = append(errs, path.NewErrorf("new element %s has appeared", indexStrForErrors(k)))
+				errs = appendValueErrors(path, sensitivePaths, errs, path.NewErrorf("new element %s has appeared", indexStrForErrors(k)))
 			}
 		}
 
@@ -269,8 +262,8 @@ func assertValueCompatible(planned, actual cty.Value, path cty.Path) []error {
 			// focus just on testing their values.
 			plannedV := planned.GetAttr(name)
 			actualV := actual.GetAttr(name)
-			moreErrs := assertValueCompatible(plannedV, actualV, append(path, cty.GetAttrStep{Name: name}))
-			errs = append(errs, moreErrs...)
+			moreErrs := assertValueCompatible(plannedV, actualV, append(path, cty.GetAttrStep{Name: name}), sensitivePaths.Get(name))
+			errs = appendValueErrors(path, sensitivePaths, errs, moreErrs...)
 		}
 
 	case ty.IsSetType():
@@ -281,11 +274,11 @@ func assertValueCompatible(planned, actual cty.Value, path cty.Path) []error {
 		// the general type-match checks we ran earlier in this function.
 		if planned.IsKnown() && !planned.IsNull() && !actual.IsNull() {
 
-			setErrs := assertSetValuesCompatible(planned, actual, path, func(plannedV, actualV cty.Value) bool {
-				errs := assertValueCompatible(plannedV, actualV, append(path, cty.IndexStep{Key: actualV}))
+			setErrs := assertSetValuesCompatible(planned, actual, path, sensitivePaths.GetDynamic(), func(plannedV, actualV cty.Value) bool {
+				errs := assertValueCompatible(plannedV, actualV, append(path, cty.IndexStep{Key: actualV}), sensitivePaths)
 				return len(errs) == 0
 			})
-			errs = append(errs, setErrs...)
+			errs = appendValueErrors(path, sensitivePaths, errs, setErrs...)
 
 			// There can be fewer elements in a set after its elements are all
 			// known (values that turn out to be equal will coalesce) but the
@@ -294,12 +287,21 @@ func assertValueCompatible(planned, actual cty.Value, path cty.Path) []error {
 			plannedL := planned.LengthInt()
 			actualL := actual.LengthInt()
 			if plannedL < actualL {
-				errs = append(errs, path.NewErrorf("length changed from %d to %d", plannedL, actualL))
+				errs = appendValueErrors(path, sensitivePaths, errs, path.NewErrorf("length changed from %d to %d", plannedL, actualL))
 			}
 		}
 	}
 
 	return errs
+}
+
+// Appends errors if the current path is not sensitive. Otherwise it will append a sanitized error.
+func appendValueErrors(path cty.Path, sensitivePathElement *configschema.SensitivePathElement, errs []error, newErrors ...error) []error {
+	if sensitivePathElement.IsSensitive() {
+		return append(errs, path.NewErrorf("inconsistency in sensitive value"))
+	}
+
+	return append(errs, newErrors...)
 }
 
 func indexStrForErrors(v cty.Value) string {
@@ -404,7 +406,7 @@ func couldBeUnknownBlockPlaceholderElement(v cty.Value, schema *configschema.Blo
 // messages here is a provider developer (via a bug report from a user) and so
 // we intentionally violate our usual rule of keeping cty implementation
 // details out of error messages.
-func assertSetValuesCompatible(planned, actual cty.Value, path cty.Path, f func(aVal, bVal cty.Value) bool) []error {
+func assertSetValuesCompatible(planned, actual cty.Value, path cty.Path, sensitivePaths *configschema.SensitivePathElement, f func(aVal, bVal cty.Value) bool) []error {
 	a := planned
 	b := actual
 
@@ -430,7 +432,11 @@ func assertSetValuesCompatible(planned, actual cty.Value, path cty.Path, f func(
 	var errs []error
 	for i, eq := range aeqs {
 		if !eq {
-			errs = append(errs, path.NewErrorf("planned set element %#v does not correlate with any element in actual", as[i]))
+			if sensitivePaths.ContainsSensitive() {
+				errs = append(errs, path.NewErrorf("planned set element with sensitive information does not correlate with any element in actual"))
+			} else {
+				errs = append(errs, path.NewErrorf("planned set element %#v does not correlate with any element in actual", as[i]))
+			}
 		}
 	}
 	if len(errs) > 0 {
@@ -440,7 +446,11 @@ func assertSetValuesCompatible(planned, actual cty.Value, path cty.Path, f func(
 	}
 	for i, eq := range beqs {
 		if !eq {
-			errs = append(errs, path.NewErrorf("actual set element %#v does not correlate with any element in plan", bs[i]))
+			if sensitivePaths.ContainsSensitive() {
+				errs = append(errs, path.NewErrorf("actual set element with sensitive information does not correlate with any element in plan"))
+			} else {
+				errs = append(errs, path.NewErrorf("actual set element %#v does not correlate with any element in plan", bs[i]))
+			}
 		}
 	}
 	return errs

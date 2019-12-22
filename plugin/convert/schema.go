@@ -23,7 +23,7 @@ func ConfigSchemaToProto(b *configschema.Block) *proto.Schema_Block {
 			Optional:    a.Optional,
 			Computed:    a.Computed,
 			Required:    a.Required,
-			Sensitive:   a.Sensitive,
+			Sensitive:   b.SensitivePaths.Get(name).IsSensitive(),
 		}
 
 		ty, err := json.Marshal(a.Type)
@@ -91,7 +91,6 @@ func ProtoToConfigSchema(b *proto.Schema_Block) *configschema.Block {
 			Required:    a.Required,
 			Optional:    a.Optional,
 			Computed:    a.Computed,
-			Sensitive:   a.Sensitive,
 		}
 
 		if err := json.Unmarshal(a.Type, &attr.Type); err != nil {
@@ -99,6 +98,9 @@ func ProtoToConfigSchema(b *proto.Schema_Block) *configschema.Block {
 		}
 
 		block.Attributes[a.Name] = attr
+
+		// Fixme: We need to modify the protobuf schema to support nested sensitive values which are no attributes
+		block.SensitivePaths.Add(a.Name, configschema.NewSensitivePathLeaf(a.Sensitive))
 	}
 
 	for _, b := range b.BlockTypes {

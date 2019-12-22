@@ -52,7 +52,7 @@ func marshalBlock(configBlock *configschema.Block) *block {
 	if len(configBlock.Attributes) > 0 {
 		attrs := make(map[string]*attribute, len(configBlock.Attributes))
 		for k, attr := range configBlock.Attributes {
-			attrs[k] = marshalAttribute(attr)
+			attrs[k] = marshalAttribute(attr, configBlock.SensitivePaths.Get(k))
 		}
 		ret.Attributes = attrs
 	}

@@ -33,6 +33,8 @@ func ResourceChange(
 	schema *configschema.Block,
 	color *colorstring.Colorize,
 ) string {
+	// This is the root
+
 	addr := change.Addr
 	var buf bytes.Buffer
 
@@ -145,6 +147,7 @@ const forcesNewResourceCaption = " [red]# forces replacement[reset]"
 // and returns true if any differences were found and written
 func (p *blockBodyDiffPrinter) writeBlockBodyDiff(schema *configschema.Block, old, new cty.Value, indent int, path cty.Path) bool {
 	path = ctyEnsurePathCapacity(path, 1)
+	sensitivePaths := schema.SensitivePaths
 
 	bodyWritten := false
 	blankBeforeBlocks := false
@@ -173,12 +176,11 @@ func (p *blockBodyDiffPrinter) writeBlockBodyDiff(schema *configschema.Block, ol
 		}
 
 		for _, name := range attrNames {
-			attrS := schema.Attributes[name]
 			oldVal := ctyGetAttrMaybeNull(old, name)
 			newVal := ctyGetAttrMaybeNull(new, name)
 
 			bodyWritten = true
-			p.writeAttrDiff(name, attrS, oldVal, newVal, attrNameLen, indent, path)
+			p.writeAttrDiff(name, oldVal, newVal, attrNameLen, indent, path, sensitivePaths)
 		}
 	}
 
@@ -205,8 +207,9 @@ func (p *blockBodyDiffPrinter) writeBlockBodyDiff(schema *configschema.Block, ol
 	return bodyWritten
 }
 
-func (p *blockBodyDiffPrinter) writeAttrDiff(name string, attrS *configschema.Attribute, old, new cty.Value, nameLen, indent int, path cty.Path) {
+func (p *blockBodyDiffPrinter) writeAttrDiff(name string, old, new cty.Value, nameLen, indent int, path cty.Path, sensitivePaths *configschema.SensitivePathElement) {
 	path = append(path, cty.GetAttrStep{Name: name})
+	sensitivePaths = sensitivePaths.Get(name)
 	p.buf.WriteString("\n")
 	p.buf.WriteString(strings.Repeat(" ", indent))
 	showJustNew := false
@@ -232,21 +235,17 @@ func (p *blockBodyDiffPrinter) writeAttrDiff(name string, attrS *configschema.At
 	p.buf.WriteString(strings.Repeat(" ", nameLen-len(name)))
 	p.buf.WriteString(" = ")
 
-	if attrS.Sensitive {
-		p.buf.WriteString("(sensitive value)")
-	} else {
-		switch {
-		case showJustNew:
-			p.writeValue(new, action, indent+2)
-			if p.pathForcesNewResource(path) {
-				p.buf.WriteString(p.color.Color(forcesNewResourceCaption))
-			}
-		default:
-			// We show new even if it is null to emphasize the fact
-			// that it is being unset, since otherwise it is easy to
-			// misunderstand that the value is still set to the old value.
-			p.writeValueDiff(old, new, indent+2, path)
+	switch {
+	case showJustNew:
+		p.writeValue(new, action, indent+2, sensitivePaths)
+		if p.pathForcesNewResource(path) && !sensitivePaths.IsSensitive() {
+			p.buf.WriteString(p.color.Color(forcesNewResourceCaption))
 		}
+	default:
+		// We show new even if it is null to emphasize the fact
+		// that it is being unset, since otherwise it is easy to
+		// misunderstand that the value is still set to the old value.
+		p.writeValueDiff(old, new, indent+2, path, sensitivePaths)
 	}
 }
 
@@ -465,7 +464,11 @@ func (p *blockBodyDiffPrinter) writeNestedBlockDiff(name string, label *string, 
 	p.buf.WriteString("}")
 }
 
-func (p *blockBodyDiffPrinter) writeValue(val cty.Value, action plans.Action, indent int) {
+func (p *blockBodyDiffPrinter) writeValue(val cty.Value, action plans.Action, indent int, sensitivePaths *configschema.SensitivePathElement) {
+	if sensitivePaths.IsSensitive() {
+		p.buf.WriteString("(sensitive value)")
+		return
+	}
 	if !val.IsKnown() {
 		p.buf.WriteString("(known after apply)")
 		return
@@ -492,11 +495,11 @@ func (p *blockBodyDiffPrinter) writeValue(val cty.Value, action plans.Action, in
 					if err == nil {
 						p.buf.WriteString("jsonencode(")
 						if jv.LengthInt() == 0 {
-							p.writeValue(jv, action, 0)
+							p.writeValue(jv, action, 0, sensitivePaths)
 						} else {
 							p.buf.WriteByte('\n')
 							p.buf.WriteString(strings.Repeat(" ", indent+4))
-							p.writeValue(jv, action, indent+4)
+							p.writeValue(jv, action, indent+4, sensitivePaths)
 							p.buf.WriteByte('\n')
 							p.buf.WriteString(strings.Repeat(" ", indent))
 						}
@@ -516,7 +519,7 @@ func (p *blockBodyDiffPrinter) writeValue(val cty.Value, action plans.Action, in
 				// information into strings and we know that a string can't
 				// have any indices or attributes that might need to be marked
 				// as (requires replacement), which is what that argument is for.
-				p.writeValueDiff(val, val, indent, nil)
+				p.writeValueDiff(val, val, indent, nil, sensitivePaths)
 				break
 			}
 
@@ -544,7 +547,7 @@ func (p *blockBodyDiffPrinter) writeValue(val cty.Value, action plans.Action, in
 			p.buf.WriteString("\n")
 			p.buf.WriteString(strings.Repeat(" ", indent+2))
 			p.writeActionSymbol(action)
-			p.writeValue(val, action, indent+4)
+			p.writeValue(val, action, indent+4, sensitivePaths.GetDynamic())
 			p.buf.WriteString(",")
 		}
 
@@ -570,10 +573,10 @@ func (p *blockBodyDiffPrinter) writeValue(val cty.Value, action plans.Action, in
 			p.buf.WriteString("\n")
 			p.buf.WriteString(strings.Repeat(" ", indent+2))
 			p.writeActionSymbol(action)
-			p.writeValue(key, action, indent+4)
+			p.writeValue(key, action, indent+4, sensitivePaths.GetDynamic())
 			p.buf.WriteString(strings.Repeat(" ", keyLen-len(key.AsString())))
 			p.buf.WriteString(" = ")
-			p.writeValue(val, action, indent+4)
+			p.writeValue(val, action, indent+4, sensitivePaths.GetDynamic())
 		}
 
 		if val.LengthInt() > 0 {
@@ -604,7 +607,7 @@ func (p *blockBodyDiffPrinter) writeValue(val cty.Value, action plans.Action, in
 			p.buf.WriteString(attrName)
 			p.buf.WriteString(strings.Repeat(" ", nameLen-len(attrName)))
 			p.buf.WriteString(" = ")
-			p.writeValue(val, action, indent+4)
+			p.writeValue(val, action, indent+4, sensitivePaths.Get(attrName))
 		}
 
 		if len(attrNames) > 0 {
@@ -615,7 +618,12 @@ func (p *blockBodyDiffPrinter) writeValue(val cty.Value, action plans.Action, in
 	}
 }
 
-func (p *blockBodyDiffPrinter) writeValueDiff(old, new cty.Value, indent int, path cty.Path) {
+func (p *blockBodyDiffPrinter) writeValueDiff(old, new cty.Value, indent int, path cty.Path, sensitivePaths *configschema.SensitivePathElement) {
+	if sensitivePaths.IsSensitive() {
+		p.buf.WriteString("(sensitive value)")
+		return
+	}
+
 	ty := old.Type()
 	typesEqual := ctyTypesEqual(ty, new.Type())
 
@@ -652,7 +660,7 @@ func (p *blockBodyDiffPrinter) writeValueDiff(old, new cty.Value, indent int, pa
 							p.buf.WriteByte('\n')
 							p.buf.WriteString(strings.Repeat(" ", indent+2))
 							p.writeActionSymbol(plans.Update)
-							p.writeValueDiff(oldJV, newJV, indent+4, path)
+							p.writeValueDiff(oldJV, newJV, indent+4, path, sensitivePaths)
 							p.buf.WriteByte('\n')
 							p.buf.WriteString(strings.Repeat(" ", indent))
 							p.buf.WriteByte(')')
@@ -667,7 +675,7 @@ func (p *blockBodyDiffPrinter) writeValueDiff(old, new cty.Value, indent int, pa
 							}
 							p.buf.WriteByte('\n')
 							p.buf.WriteString(strings.Repeat(" ", indent+4))
-							p.writeValue(oldJV, plans.NoOp, indent+4)
+							p.writeValue(oldJV, plans.NoOp, indent+4, sensitivePaths)
 							p.buf.WriteByte('\n')
 							p.buf.WriteString(strings.Repeat(" ", indent))
 							p.buf.WriteByte(')')
@@ -785,7 +793,7 @@ func (p *blockBodyDiffPrinter) writeValueDiff(old, new cty.Value, indent int, pa
 				}
 
 				p.writeActionSymbol(action)
-				p.writeValue(val, action, indent+4)
+				p.writeValue(val, action, indent+4, sensitivePaths.GetDynamic())
 				p.buf.WriteString(",\n")
 			}
 
@@ -805,15 +813,15 @@ func (p *blockBodyDiffPrinter) writeValueDiff(old, new cty.Value, indent int, pa
 				p.writeActionSymbol(elemDiff.Action)
 				switch elemDiff.Action {
 				case plans.NoOp, plans.Delete:
-					p.writeValue(elemDiff.Before, elemDiff.Action, indent+4)
+					p.writeValue(elemDiff.Before, elemDiff.Action, indent+4, sensitivePaths.GetDynamic())
 				case plans.Update:
-					p.writeValueDiff(elemDiff.Before, elemDiff.After, indent+4, path)
+					p.writeValueDiff(elemDiff.Before, elemDiff.After, indent+4, path, sensitivePaths.GetDynamic())
 				case plans.Create:
-					p.writeValue(elemDiff.After, elemDiff.Action, indent+4)
+					p.writeValue(elemDiff.After, elemDiff.Action, indent+4, sensitivePaths.GetDynamic())
 				default:
 					// Should never happen since the above covers all
 					// actions that ctySequenceDiff can return.
-					p.writeValue(elemDiff.After, elemDiff.Action, indent+4)
+					p.writeValue(elemDiff.After, elemDiff.Action, indent+4, sensitivePaths.GetDynamic())
 				}
 
 				p.buf.WriteString(",\n")
@@ -874,21 +882,21 @@ func (p *blockBodyDiffPrinter) writeValueDiff(old, new cty.Value, indent int, pa
 				path := append(path, cty.IndexStep{Key: kV})
 
 				p.writeActionSymbol(action)
-				p.writeValue(kV, action, indent+4)
+				p.writeValue(kV, action, indent+4, sensitivePaths.GetDynamic())
 				p.buf.WriteString(strings.Repeat(" ", keyLen-len(k)))
 				p.buf.WriteString(" = ")
 				switch action {
 				case plans.Create, plans.NoOp:
 					v := new.Index(kV)
-					p.writeValue(v, action, indent+4)
+					p.writeValue(v, action, indent+4, sensitivePaths.GetDynamic())
 				case plans.Delete:
 					oldV := old.Index(kV)
 					newV := cty.NullVal(oldV.Type())
-					p.writeValueDiff(oldV, newV, indent+4, path)
+					p.writeValueDiff(oldV, newV, indent+4, path, sensitivePaths.GetDynamic())
 				default:
 					oldV := old.Index(kV)
 					newV := new.Index(kV)
-					p.writeValueDiff(oldV, newV, indent+4, path)
+					p.writeValueDiff(oldV, newV, indent+4, path, sensitivePaths.GetDynamic())
 				}
 
 				p.buf.WriteByte('\n')
@@ -954,15 +962,15 @@ func (p *blockBodyDiffPrinter) writeValueDiff(old, new cty.Value, indent int, pa
 				switch action {
 				case plans.Create, plans.NoOp:
 					v := new.GetAttr(kV)
-					p.writeValue(v, action, indent+4)
+					p.writeValue(v, action, indent+4, sensitivePaths.Get(k))
 				case plans.Delete:
 					oldV := old.GetAttr(kV)
 					newV := cty.NullVal(oldV.Type())
-					p.writeValueDiff(oldV, newV, indent+4, path)
+					p.writeValueDiff(oldV, newV, indent+4, path, sensitivePaths.Get(k))
 				default:
 					oldV := old.GetAttr(kV)
 					newV := new.GetAttr(kV)
-					p.writeValueDiff(oldV, newV, indent+4, path)
+					p.writeValueDiff(oldV, newV, indent+4, path, sensitivePaths.Get(k))
 				}
 
 				p.buf.WriteString("\n")
@@ -979,14 +987,14 @@ func (p *blockBodyDiffPrinter) writeValueDiff(old, new cty.Value, indent int, pa
 	}
 
 	// In all other cases, we just show the new and old values as-is
-	p.writeValue(old, plans.Delete, indent)
+	p.writeValue(old, plans.Delete, indent, sensitivePaths)
 	if new.IsNull() {
 		p.buf.WriteString(p.color.Color(" [dark_gray]->[reset] "))
 	} else {
 		p.buf.WriteString(p.color.Color(" [yellow]->[reset] "))
 	}
 
-	p.writeValue(new, plans.Create, indent)
+	p.writeValue(new, plans.Create, indent, sensitivePaths)
 	if p.pathForcesNewResource(path) {
 		p.buf.WriteString(p.color.Color(forcesNewResourceCaption))
 	}

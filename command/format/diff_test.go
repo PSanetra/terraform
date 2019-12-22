@@ -1,6 +1,7 @@
 package format
 
 import (
+	"github.com/google/go-cmp/cmp"
 	"testing"
 
 	"github.com/hashicorp/terraform/addrs"
@@ -296,27 +297,203 @@ new line
 		},
 
 		// Sensitive
-
-		"creation with sensitive field": {
+		"creation with sensitive": {
 			Action: plans.Create,
 			Mode:   addrs.ManagedResourceMode,
 			Before: cty.NullVal(cty.EmptyObject),
 			After: cty.ObjectVal(map[string]cty.Value{
 				"id":       cty.UnknownVal(cty.String),
 				"password": cty.StringVal("top-secret"),
+				"listValue": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"mapValue": cty.MapVal(map[string]cty.Value{
+					"element": cty.ObjectVal(map[string]cty.Value{
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"setValue": cty.SetVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"listBlock": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"mapBlock": cty.MapVal(map[string]cty.Value{
+					"mylabel": cty.ObjectVal(map[string]cty.Value{
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"setBlock": cty.SetVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"singleBlock": cty.ObjectVal(map[string]cty.Value{
+					"password": cty.StringVal("top-secret"),
+				}),
 			}),
 			Schema: &configschema.Block{
 				Attributes: map[string]*configschema.Attribute{
 					"id":       {Type: cty.String, Computed: true},
-					"password": {Type: cty.String, Optional: true, Sensitive: true},
+					"password": {Type: cty.String, Optional: true},
+					"listValue": {
+						Type: cty.List(cty.Object(map[string]cty.Type{
+							"password": cty.String,
+						})),
+					},
+					"mapValue": {
+						Type: cty.Map(cty.Object(map[string]cty.Type{
+							"password": cty.String,
+						})),
+					},
+					"setValue": {
+						Type: cty.Set(cty.Object(map[string]cty.Type{
+							"password": cty.String,
+						})),
+					},
+				},
+				BlockTypes: map[string]*configschema.NestedBlock{
+					"listBlock": {
+						Nesting: configschema.NestingList,
+						Block: configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"password": {
+									Type:     cty.String,
+									Optional: true,
+								},
+							},
+							SensitivePaths: &configschema.SensitivePathElement{
+								NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+									"password": {},
+								},
+							},
+						},
+					},
+					"mapBlock": {
+						Nesting: configschema.NestingMap,
+						Block: configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"password": {
+									Type:     cty.String,
+									Optional: true,
+								},
+							},
+							SensitivePaths: &configschema.SensitivePathElement{
+								NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+									"password": {},
+								},
+							},
+						},
+					},
+					"setBlock": {
+						Nesting: configschema.NestingSet,
+						Block: configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"password": {
+									Type:     cty.String,
+									Optional: true,
+								},
+							},
+							SensitivePaths: &configschema.SensitivePathElement{
+								NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+									"password": {},
+								},
+							},
+						},
+					},
+					"singleBlock": {
+						Nesting: configschema.NestingSingle,
+						Block: configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"password": {
+									Type:     cty.String,
+									Optional: true,
+								},
+							},
+							SensitivePaths: &configschema.SensitivePathElement{
+								NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+									"password": {},
+								},
+							},
+						},
+					},
+				},
+				SensitivePaths: &configschema.SensitivePathElement{
+					NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+						"password": {},
+						"listValue": {
+							NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+								configschema.DynamicSensitivePathElementKey: {
+									NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+										"password": {},
+									},
+								},
+							},
+						},
+						"mapValue": {
+							NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+								configschema.DynamicSensitivePathElementKey: {
+									NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+										"password": {},
+									},
+								},
+							},
+						},
+						"setValue": {
+							NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+								configschema.DynamicSensitivePathElementKey: {
+									NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+										"password": {},
+									},
+								},
+							},
+						},
+					},
 				},
 			},
 			RequiredReplace: cty.NewPathSet(),
 			Tainted:         false,
 			ExpectedOutput: `  # test_instance.example will be created
   + resource "test_instance" "example" {
-      + id       = (known after apply)
-      + password = (sensitive value)
+      + id        = (known after apply)
+      + listValue = [
+          + {
+              + password = (sensitive value)
+            },
+        ]
+      + mapValue  = {
+          + "element" = {
+              + password = (sensitive value)
+            }
+        }
+      + password  = (sensitive value)
+      + setValue  = [
+          + {
+              + password = (sensitive value)
+            },
+        ]
+
+      + listBlock {
+          + password = (sensitive value)
+        }
+
+      + mapBlock "mylabel" {
+          + password = (sensitive value)
+        }
+
+      + setBlock {
+          + password = (sensitive value)
+        }
+
+      + singleBlock {
+          + password = (sensitive value)
+        }
     }
 `,
 		},
@@ -327,26 +504,260 @@ new line
 				"id":       cty.StringVal("blah"),
 				"str":      cty.StringVal("before"),
 				"password": cty.StringVal("top-secret"),
+				"listValue": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"str":      cty.StringVal("before"),
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"mapValue": cty.MapVal(map[string]cty.Value{
+					"element": cty.ObjectVal(map[string]cty.Value{
+						"str":      cty.StringVal("before"),
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"setValue": cty.SetVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"str":      cty.StringVal("before"),
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"listBlock": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"str":      cty.StringVal("before"),
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"mapBlock": cty.MapVal(map[string]cty.Value{
+					"mylabel": cty.ObjectVal(map[string]cty.Value{
+						"str":      cty.StringVal("before"),
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"setBlock": cty.SetVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"str":      cty.StringVal("before"),
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"singleBlock": cty.ObjectVal(map[string]cty.Value{
+					"str":      cty.StringVal("before"),
+					"password": cty.StringVal("top-secret"),
+				}),
 			}),
 			After: cty.ObjectVal(map[string]cty.Value{
 				"id":       cty.UnknownVal(cty.String),
 				"str":      cty.StringVal("after"),
 				"password": cty.StringVal("top-secret"),
+				"listValue": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"str":      cty.StringVal("after"),
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"mapValue": cty.MapVal(map[string]cty.Value{
+					"element": cty.ObjectVal(map[string]cty.Value{
+						"str":      cty.StringVal("after"),
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"setValue": cty.SetVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"str":      cty.StringVal("after"),
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"listBlock": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"str":      cty.StringVal("after"),
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"mapBlock": cty.MapVal(map[string]cty.Value{
+					"mylabel": cty.ObjectVal(map[string]cty.Value{
+						"str":      cty.StringVal("after"),
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"setBlock": cty.SetVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"str":      cty.StringVal("after"),
+						"password": cty.StringVal("top-secret"),
+					}),
+				}),
+				"singleBlock": cty.ObjectVal(map[string]cty.Value{
+					"str":      cty.StringVal("after"),
+					"password": cty.StringVal("top-secret"),
+				}),
 			}),
 			Schema: &configschema.Block{
 				Attributes: map[string]*configschema.Attribute{
 					"id":       {Type: cty.String, Computed: true},
 					"str":      {Type: cty.String, Optional: true},
-					"password": {Type: cty.String, Optional: true, Sensitive: true},
+					"password": {Type: cty.String, Optional: true},
+					"listValue": {
+						Type: cty.List(cty.Object(map[string]cty.Type{
+							"str":      cty.String,
+							"password": cty.String,
+						})),
+					},
+					"mapValue": {
+						Type: cty.Map(cty.Object(map[string]cty.Type{
+							"str":      cty.String,
+							"password": cty.String,
+						})),
+					},
+					"setValue": {
+						Type: cty.Set(cty.Object(map[string]cty.Type{
+							"str":      cty.String,
+							"password": cty.String,
+						})),
+					},
+				},
+				BlockTypes: map[string]*configschema.NestedBlock{
+					"listBlock": {
+						Nesting: configschema.NestingList,
+						Block: configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"str":      {Type: cty.String, Optional: true},
+								"password": {Type: cty.String, Optional: true},
+							},
+							SensitivePaths: &configschema.SensitivePathElement{
+								NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+									"password": {},
+								},
+							},
+						},
+					},
+					"mapBlock": {
+						Nesting: configschema.NestingMap,
+						Block: configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"str":      {Type: cty.String, Optional: true},
+								"password": {Type: cty.String, Optional: true},
+							},
+							SensitivePaths: &configschema.SensitivePathElement{
+								NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+									"password": {},
+								},
+							},
+						},
+					},
+					"setBlock": {
+						Nesting: configschema.NestingSet,
+						Block: configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"str":      {Type: cty.String, Optional: true},
+								"password": {Type: cty.String, Optional: true},
+							},
+							SensitivePaths: &configschema.SensitivePathElement{
+								NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+									"password": {},
+								},
+							},
+						},
+					},
+					"singleBlock": {
+						Nesting: configschema.NestingSingle,
+						Block: configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"str":      {Type: cty.String, Optional: true},
+								"password": {Type: cty.String, Optional: true},
+							},
+							SensitivePaths: &configschema.SensitivePathElement{
+								NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+									"password": {},
+								},
+							},
+						},
+					},
+				},
+				SensitivePaths: &configschema.SensitivePathElement{
+					NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+						"password": {},
+						"listValue": {
+							NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+								configschema.DynamicSensitivePathElementKey: {
+									NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+										"password": {},
+									},
+								},
+							},
+						},
+						"mapValue": {
+							NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+								configschema.DynamicSensitivePathElementKey: {
+									NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+										"password": {},
+									},
+								},
+							},
+						},
+						"setValue": {
+							NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+								configschema.DynamicSensitivePathElementKey: {
+									NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+										"password": {},
+									},
+								},
+							},
+						},
+					},
 				},
 			},
 			RequiredReplace: cty.NewPathSet(),
 			Tainted:         false,
 			ExpectedOutput: `  # test_instance.example will be updated in-place
   ~ resource "test_instance" "example" {
-      ~ id       = "blah" -> (known after apply)
-        password = (sensitive value)
-      ~ str      = "before" -> "after"
+      ~ id        = "blah" -> (known after apply)
+      ~ listValue = [
+          ~ {
+                password = (sensitive value)
+              ~ str      = "before" -> "after"
+            },
+        ]
+      ~ mapValue  = {
+          ~ "element" = {
+                password = (sensitive value)
+              ~ str      = "before" -> "after"
+            }
+        }
+        password  = (sensitive value)
+      ~ setValue  = [
+          + {
+              + password = (sensitive value)
+              + str      = "after"
+            },
+          - {
+              - password = (sensitive value)
+              - str      = "before"
+            },
+        ]
+      ~ str       = "before" -> "after"
+
+      ~ listBlock {
+            password = (sensitive value)
+          ~ str      = "before" -> "after"
+        }
+
+      ~ mapBlock "mylabel" {
+            password = (sensitive value)
+          ~ str      = "before" -> "after"
+        }
+
+      + setBlock {
+          + password = (sensitive value)
+          + str      = "after"
+        }
+      - setBlock {
+          - password = (sensitive value)
+          - str      = "before" -> null
+        }
+
+      ~ singleBlock {
+            password = (sensitive value)
+          ~ str      = "before" -> "after"
+        }
     }
 `,
 		},
@@ -3167,8 +3578,8 @@ func runTestCases(t *testing.T, testCases map[string]testCase) {
 			}
 
 			output := ResourceChange(change, tc.Tainted, tc.Schema, color)
-			if output != tc.ExpectedOutput {
-				t.Fatalf("Unexpected diff.\ngot:\n%s\nwant:\n%s\n", output, tc.ExpectedOutput)
+			if !cmp.Equal(output, tc.ExpectedOutput) {
+				t.Fatalf("Unexpected diff:\n %v\n", cmp.Diff(tc.ExpectedOutput, output))
 			}
 		})
 	}

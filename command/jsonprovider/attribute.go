@@ -15,7 +15,7 @@ type attribute struct {
 	Sensitive     bool            `json:"sensitive,omitempty"`
 }
 
-func marshalAttribute(attr *configschema.Attribute) *attribute {
+func marshalAttribute(attr *configschema.Attribute, sensitivePaths *configschema.SensitivePathElement) *attribute {
 	// we're not concerned about errors because at this point the schema has
 	// already been checked and re-checked.
 	attrTy, _ := attr.Type.MarshalJSON()
@@ -26,6 +26,9 @@ func marshalAttribute(attr *configschema.Attribute) *attribute {
 		Required:      attr.Required,
 		Optional:      attr.Optional,
 		Computed:      attr.Computed,
-		Sensitive:     attr.Sensitive,
+		// We are not marshalling any information about further nested sensitive values.
+		// Maybe we should deprecate the sensitive field in this attribute struct
+		// and marshal the whole sensitivePaths structure.
+		Sensitive: sensitivePaths.IsSensitive(),
 	}
 }

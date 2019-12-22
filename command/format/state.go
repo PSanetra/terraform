@@ -74,7 +74,7 @@ func State(opts *StateOpts) string {
 		for _, k := range ks {
 			v := m.OutputValues[k]
 			p.buf.WriteString(fmt.Sprintf("%s = ", k))
-			p.writeValue(v.Value, plans.NoOp, 0)
+			p.writeValue(v.Value, plans.NoOp, 0, configschema.NewSensitivePathLeaf(false))
 			p.buf.WriteString("\n")
 		}
 	}

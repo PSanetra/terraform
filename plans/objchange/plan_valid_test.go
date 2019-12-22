@@ -181,10 +181,18 @@ func TestAssertPlanValid(t *testing.T) {
 						Block: configschema.Block{
 							Attributes: map[string]*configschema.Attribute{
 								"c": {
-									Type:      cty.String,
-									Optional:  true,
-									Sensitive: true,
+									Type:     cty.String,
+									Optional: true,
 								},
+							},
+						},
+					},
+				},
+				SensitivePaths: &configschema.SensitivePathElement{
+					NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+						"b": {
+							NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+								"c": configschema.NewSensitivePathLeaf(true),
 							},
 						},
 					},
@@ -213,7 +221,66 @@ func TestAssertPlanValid(t *testing.T) {
 				}),
 			}),
 			[]string{
-				`.b[0].c: sensitive planned value does not match config value`,
+				`.b[0].c: planned value with sensitive information does not match config value`,
+			},
+		},
+		"no computed, invalid change in plan sensitive with prior value": {
+			&configschema.Block{
+				Attributes: map[string]*configschema.Attribute{
+					"a": {
+						Type:     cty.String,
+						Optional: true,
+					},
+				},
+				BlockTypes: map[string]*configschema.NestedBlock{
+					"b": {
+						Nesting: configschema.NestingList,
+						Block: configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"c": {
+									Type:     cty.String,
+									Optional: true,
+								},
+							},
+						},
+					},
+				},
+				SensitivePaths: &configschema.SensitivePathElement{
+					NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+						"b": {
+							NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+								"c": configschema.NewSensitivePathLeaf(true),
+							},
+						},
+					},
+				},
+			},
+			cty.ObjectVal(map[string]cty.Value{
+				"a": cty.StringVal("a value"),
+				"b": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"c": cty.StringVal("prior c value"),
+					}),
+				}),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"a": cty.StringVal("a value"),
+				"b": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"c": cty.StringVal("c value"),
+					}),
+				}),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"a": cty.StringVal("a value"),
+				"b": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"c": cty.StringVal("new c value"),
+					}),
+				}),
+			}),
+			[]string{
+				`.b[0].c: planned value with sensitive information does not match config value nor prior value`,
 			},
 		},
 		"no computed, diff suppression in plan": {

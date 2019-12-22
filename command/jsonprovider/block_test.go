@@ -36,10 +36,15 @@ func TestMarshalBlock(t *testing.T) {
 						},
 					},
 				},
+				SensitivePaths: &configschema.SensitivePathElement{
+					NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+						"ami": configschema.NewSensitivePathLeaf(true),
+					},
+				},
 			},
 			Want: &block{
 				Attributes: map[string]*attribute{
-					"ami": {AttributeType: json.RawMessage(`"string"`), Optional: true},
+					"ami": {AttributeType: json.RawMessage(`"string"`), Optional: true, Sensitive: true},
 					"id":  {AttributeType: json.RawMessage(`"string"`), Optional: true, Computed: true},
 				},
 				BlockTypes: map[string]*blockType{

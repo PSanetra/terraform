@@ -33,10 +33,10 @@ import (
 // can use this to signal that the new value is functionally equivalent to
 // the old and thus no change is required.
 func AssertPlanValid(schema *configschema.Block, priorState, config, plannedState cty.Value) []error {
-	return assertPlanValid(schema, priorState, config, plannedState, nil)
+	return assertPlanValid(schema, priorState, config, plannedState, nil, schema.SensitivePaths)
 }
 
-func assertPlanValid(schema *configschema.Block, priorState, config, plannedState cty.Value, path cty.Path) []error {
+func assertPlanValid(schema *configschema.Block, priorState, config, plannedState cty.Value, path cty.Path, sensitivePaths *configschema.SensitivePathElement) []error {
 	var errs []error
 	if plannedState.IsNull() && !config.IsNull() {
 		errs = append(errs, path.NewErrorf("planned for absense but config wants existence"))
@@ -62,7 +62,7 @@ func assertPlanValid(schema *configschema.Block, priorState, config, plannedStat
 		}
 
 		path := append(path, cty.GetAttrStep{Name: name})
-		moreErrs := assertPlannedValueValid(attrS, priorV, configV, plannedV, path)
+		moreErrs := assertPlannedValueValid(attrS, priorV, configV, plannedV, path, sensitivePaths.Get(name))
 		errs = append(errs, moreErrs...)
 	}
 	for name, blockS := range schema.BlockTypes {
@@ -84,7 +84,7 @@ func assertPlanValid(schema *configschema.Block, priorState, config, plannedStat
 
 		switch blockS.Nesting {
 		case configschema.NestingSingle, configschema.NestingGroup:
-			moreErrs := assertPlanValid(&blockS.Block, priorV, configV, plannedV, path)
+			moreErrs := assertPlanValid(&blockS.Block, priorV, configV, plannedV, path, sensitivePaths.Get(name))
 			errs = append(errs, moreErrs...)
 		case configschema.NestingList:
 			// A NestingList might either be a list or a tuple, depending on
@@ -118,7 +118,7 @@ func assertPlanValid(schema *configschema.Block, priorState, config, plannedStat
 					priorEV = priorV.Index(idx)
 				}
 
-				moreErrs := assertPlanValid(&blockS.Block, priorEV, configEV, plannedEV, path)
+				moreErrs := assertPlanValid(&blockS.Block, priorEV, configEV, plannedEV, path, sensitivePaths.Get(name))
 				errs = append(errs, moreErrs...)
 			}
 		case configschema.NestingMap:
@@ -151,7 +151,7 @@ func assertPlanValid(schema *configschema.Block, priorState, config, plannedStat
 					if !priorV.IsNull() && priorV.Type().HasAttribute(k) {
 						priorEV = priorV.GetAttr(k)
 					}
-					moreErrs := assertPlanValid(&blockS.Block, priorEV, configEV, plannedEV, path)
+					moreErrs := assertPlanValid(&blockS.Block, priorEV, configEV, plannedEV, path, sensitivePaths.Get(name))
 					errs = append(errs, moreErrs...)
 				}
 				for k := range configAtys {
@@ -184,7 +184,7 @@ func assertPlanValid(schema *configschema.Block, priorState, config, plannedStat
 					if !priorV.IsNull() && priorV.HasIndex(idx).True() {
 						priorEV = priorV.Index(idx)
 					}
-					moreErrs := assertPlanValid(&blockS.Block, priorEV, configEV, plannedEV, path)
+					moreErrs := assertPlanValid(&blockS.Block, priorEV, configEV, plannedEV, path, sensitivePaths.Get(name))
 					errs = append(errs, moreErrs...)
 				}
 				for it := configV.ElementIterator(); it.Next(); {
@@ -229,7 +229,7 @@ func assertPlanValid(schema *configschema.Block, priorState, config, plannedStat
 	return errs
 }
 
-func assertPlannedValueValid(attrS *configschema.Attribute, priorV, configV, plannedV cty.Value, path cty.Path) []error {
+func assertPlannedValueValid(attrS *configschema.Attribute, priorV, configV, plannedV cty.Value, path cty.Path, sensitivePaths *configschema.SensitivePathElement) []error {
 	var errs []error
 	if plannedV.RawEquals(configV) {
 		// This is the easy path: provider didn't change anything at all.
@@ -251,15 +251,15 @@ func assertPlannedValueValid(attrS *configschema.Attribute, priorV, configV, pla
 	// If none of the above conditions match, the provider has made an invalid
 	// change to this attribute.
 	if priorV.IsNull() {
-		if attrS.Sensitive {
-			errs = append(errs, path.NewErrorf("sensitive planned value does not match config value"))
+		if sensitivePaths.ContainsSensitive() {
+			errs = append(errs, path.NewErrorf("planned value with sensitive information does not match config value"))
 		} else {
 			errs = append(errs, path.NewErrorf("planned value %#v does not match config value %#v", plannedV, configV))
 		}
 		return errs
 	}
-	if attrS.Sensitive {
-		errs = append(errs, path.NewErrorf("sensitive planned value does not match config value nor prior value"))
+	if sensitivePaths.ContainsSensitive() {
+		errs = append(errs, path.NewErrorf("planned value with sensitive information does not match config value nor prior value"))
 	} else {
 		errs = append(errs, path.NewErrorf("planned value %#v does not match config value %#v nor prior value %#v", plannedV, configV, priorV))
 	}

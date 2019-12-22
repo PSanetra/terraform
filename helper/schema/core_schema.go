@@ -29,6 +29,8 @@ func (m schemaMap) CoreConfigSchema() *configschema.Block {
 		return &configschema.Block{}
 	}
 
+	// This is the root
+
 	ret := &configschema.Block{
 		Attributes: map[string]*configschema.Attribute{},
 		BlockTypes: map[string]*configschema.NestedBlock{},
@@ -36,7 +38,8 @@ func (m schemaMap) CoreConfigSchema() *configschema.Block {
 
 	for name, schema := range m {
 		if schema.Elem == nil {
-			ret.Attributes[name] = schema.coreConfigSchemaAttribute()
+			attr, sensitivePaths := schema.coreConfigSchemaAttribute()
+			ret.AddAttribute(name, attr, sensitivePaths)
 			continue
 		}
 		if schema.Type == TypeMap {
@@ -50,27 +53,33 @@ func (m schemaMap) CoreConfigSchema() *configschema.Block {
 				sch.Elem = &Schema{
 					Type: TypeString,
 				}
-				ret.Attributes[name] = sch.coreConfigSchemaAttribute()
+				attr, sensitivePaths := sch.coreConfigSchemaAttribute()
+				ret.AddAttribute(name, attr, sensitivePaths)
 				continue
 			}
 		}
 		switch schema.ConfigMode {
 		case SchemaConfigModeAttr:
-			ret.Attributes[name] = schema.coreConfigSchemaAttribute()
+			attr, sensitivePaths := schema.coreConfigSchemaAttribute()
+			ret.AddAttribute(name, attr, sensitivePaths)
 		case SchemaConfigModeBlock:
 			ret.BlockTypes[name] = schema.coreConfigSchemaBlock()
+			ret.SensitivePaths = ret.SensitivePaths.Add(name, ret.BlockTypes[name].SensitivePaths)
 		default: // SchemaConfigModeAuto, or any other invalid value
 			if schema.Computed && !schema.Optional {
 				// Computed-only schemas are always handled as attributes,
 				// because they never appear in configuration.
-				ret.Attributes[name] = schema.coreConfigSchemaAttribute()
+				attr, sensitivePaths := schema.coreConfigSchemaAttribute()
+				ret.AddAttribute(name, attr, sensitivePaths)
 				continue
 			}
 			switch schema.Elem.(type) {
 			case *Schema, ValueType:
-				ret.Attributes[name] = schema.coreConfigSchemaAttribute()
+				attr, sensitivePaths := schema.coreConfigSchemaAttribute()
+				ret.AddAttribute(name, attr, sensitivePaths)
 			case *Resource:
 				ret.BlockTypes[name] = schema.coreConfigSchemaBlock()
+				ret.SensitivePaths = ret.SensitivePaths.Add(name, ret.BlockTypes[name].SensitivePaths)
 			default:
 				// Should never happen for a valid schema
 				panic(fmt.Errorf("invalid Schema.Elem %#v; need *Schema or *Resource", schema.Elem))
@@ -85,7 +94,7 @@ func (m schemaMap) CoreConfigSchema() *configschema.Block {
 // of a schema. This is appropriate only for primitives or collections whose
 // Elem is an instance of Schema. Use coreConfigSchemaBlock for collections
 // whose elem is a whole resource.
-func (s *Schema) coreConfigSchemaAttribute() *configschema.Attribute {
+func (s *Schema) coreConfigSchemaAttribute() (*configschema.Attribute, *configschema.SensitivePathElement) {
 	// The Schema.DefaultFunc capability adds some extra weirdness here since
 	// it can be combined with "Required: true" to create a sitution where
 	// required-ness is conditional. Terraform Core doesn't share this concept,
@@ -115,14 +124,17 @@ func (s *Schema) coreConfigSchemaAttribute() *configschema.Attribute {
 		}
 	}
 
-	return &configschema.Attribute{
-		Type:        s.coreConfigSchemaType(),
+	t, sensitivePaths := s.coreConfigSchemaType()
+
+	attr := &configschema.Attribute{
+		Type:        t,
 		Optional:    opt,
 		Required:    reqd,
 		Computed:    s.Computed,
-		Sensitive:   s.Sensitive,
 		Description: s.Description,
 	}
+
+	return attr, sensitivePaths
 }
 
 // coreConfigSchemaBlock prepares a configschema.NestedBlock representation of
@@ -130,6 +142,7 @@ func (s *Schema) coreConfigSchemaAttribute() *configschema.Attribute {
 // of Resource, and will panic otherwise.
 func (s *Schema) coreConfigSchemaBlock() *configschema.NestedBlock {
 	ret := &configschema.NestedBlock{}
+
 	if nested := s.Elem.(*Resource).coreConfigSchema(); nested != nil {
 		ret.Block = *nested
 	}
@@ -173,32 +186,38 @@ func (s *Schema) coreConfigSchemaBlock() *configschema.NestedBlock {
 
 // coreConfigSchemaType determines the core config schema type that corresponds
 // to a particular schema's type.
-func (s *Schema) coreConfigSchemaType() cty.Type {
+func (s *Schema) coreConfigSchemaType() (cty.Type, *configschema.SensitivePathElement) {
+	var sensitivePathPart = configschema.NewSensitivePathLeaf(s.Sensitive)
+
 	switch s.Type {
 	case TypeString:
-		return cty.String
+		return cty.String, sensitivePathPart
 	case TypeBool:
-		return cty.Bool
+		return cty.Bool, sensitivePathPart
 	case TypeInt, TypeFloat:
 		// configschema doesn't distinguish int and float, so helper/schema
 		// will deal with this as an additional validation step after
 		// configuration has been parsed and decoded.
-		return cty.Number
+		return cty.Number, sensitivePathPart
 	case TypeList, TypeSet, TypeMap:
 		var elemType cty.Type
+		var subSensitivePath *configschema.SensitivePathElement
 		switch set := s.Elem.(type) {
 		case *Schema:
-			elemType = set.coreConfigSchemaType()
+			elemType, subSensitivePath = set.coreConfigSchemaType()
 		case ValueType:
 			// This represents a mistake in the provider code, but it's a
 			// common one so we'll just shim it.
-			elemType = (&Schema{Type: set}).coreConfigSchemaType()
+			elemType, subSensitivePath = (&Schema{Type: set}).coreConfigSchemaType()
 		case *Resource:
 			// By default we construct a NestedBlock in this case, but this
 			// behavior is selected either for computed-only schemas or
 			// when ConfigMode is explicitly SchemaConfigModeBlock.
 			// See schemaMap.CoreConfigSchema for the exact rules.
-			elemType = set.coreConfigSchema().ImpliedType()
+			block := set.coreConfigSchema()
+
+			elemType = block.ImpliedType()
+			subSensitivePath = block.SensitivePaths
 		default:
 			if set != nil {
 				// Should never happen for a valid schema
@@ -207,14 +226,18 @@ func (s *Schema) coreConfigSchemaType() cty.Type {
 			// Some pre-existing schemas assume string as default, so we need
 			// to be compatible with them.
 			elemType = cty.String
+			subSensitivePath = configschema.NewSensitivePathLeaf(false)
 		}
+
+		sensitivePathPart = sensitivePathPart.AddDynamic(subSensitivePath)
+
 		switch s.Type {
 		case TypeList:
-			return cty.List(elemType)
+			return cty.List(elemType), sensitivePathPart
 		case TypeSet:
-			return cty.Set(elemType)
+			return cty.Set(elemType), sensitivePathPart
 		case TypeMap:
-			return cty.Map(elemType)
+			return cty.Map(elemType), sensitivePathPart
 		default:
 			// can never get here in practice, due to the case we're inside
 			panic("invalid collection type")

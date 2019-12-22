@@ -126,9 +126,13 @@ func TestAssertObjectCompatible(t *testing.T) {
 						Computed: true,
 					},
 					"name": {
-						Type:      cty.String,
-						Required:  true,
-						Sensitive: true,
+						Type:     cty.String,
+						Required: true,
+					},
+				},
+				SensitivePaths: &configschema.SensitivePathElement{
+					NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+						"name": configschema.NewSensitivePathLeaf(true),
 					},
 				},
 			},
@@ -141,7 +145,95 @@ func TestAssertObjectCompatible(t *testing.T) {
 				"name": cty.StringVal("thingy"),
 			}),
 			[]string{
-				`.name: inconsistent values for sensitive attribute`,
+				`.name: inconsistency in sensitive value`,
+			},
+		},
+		CreateTestCaseForNestedSensitiveValue(
+			cty.List(cty.String),
+			"[0]",
+			cty.ListVal([]cty.Value{cty.StringVal("wotsit")}),
+			cty.ListVal([]cty.Value{cty.StringVal("thingy")}),
+		),
+		CreateTestCaseForNestedSensitiveValue(
+			cty.Map(cty.String),
+			`["somekey"]`,
+			cty.MapVal(map[string]cty.Value{"somekey": cty.StringVal("wotsit")}),
+			cty.MapVal(map[string]cty.Value{"somekey": cty.StringVal("thingy")}),
+		),
+		CreateTestCaseForNestedSensitiveValue(
+			cty.Tuple([]cty.Type{cty.String}),
+			"[0]",
+			cty.TupleVal([]cty.Value{cty.StringVal("wotsit")}),
+			cty.TupleVal([]cty.Value{cty.StringVal("thingy")}),
+		),
+		{
+			&configschema.Block{
+				Attributes: map[string]*configschema.Attribute{
+					"id": {
+						Type:     cty.String,
+						Computed: true,
+					},
+					"attribute": {
+						Type:     cty.Set(cty.String),
+						Required: true,
+					},
+				},
+				SensitivePaths: &configschema.SensitivePathElement{
+					NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+						"attribute": &configschema.SensitivePathElement{
+							NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+								configschema.DynamicSensitivePathElementKey: configschema.NewSensitivePathLeaf(true),
+							},
+						},
+					},
+				},
+			},
+			cty.ObjectVal(map[string]cty.Value{
+				"id":        cty.UnknownVal(cty.String),
+				"attribute": cty.SetVal([]cty.Value{cty.StringVal("wotsit")}),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"id":        cty.UnknownVal(cty.String),
+				"attribute": cty.SetVal([]cty.Value{cty.StringVal("thingy")}),
+			}),
+			[]string{
+				`.attribute: planned set element with sensitive information does not correlate with any element in actual`,
+			},
+		},
+		{
+			&configschema.Block{
+				Attributes: map[string]*configschema.Attribute{
+					"id": {
+						Type:     cty.String,
+						Computed: true,
+					},
+					"attribute": {
+						Type: cty.Object(map[string]cty.Type{
+							"someAttr": cty.String,
+						}),
+						Required: true,
+					},
+				},
+				SensitivePaths: &configschema.SensitivePathElement{
+					NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+						"attribute": &configschema.SensitivePathElement{
+							NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+								"someAttr": configschema.NewSensitivePathLeaf(true),
+							},
+						},
+					},
+				},
+			},
+			cty.ObjectVal(map[string]cty.Value{
+				"id":        cty.UnknownVal(cty.String),
+				"attribute": cty.ObjectVal(map[string]cty.Value{"someAttr": cty.StringVal("wotsit")}),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"id":        cty.UnknownVal(cty.String),
+				"attribute": cty.ObjectVal(map[string]cty.Value{"someAttr": cty.StringVal("thingy")}),
+			}),
+			[]string{
+				`.attribute.someAttr: inconsistency in sensitive value`,
 			},
 		},
 		{
@@ -716,6 +808,49 @@ func TestAssertObjectCompatible(t *testing.T) {
 				BlockTypes: map[string]*configschema.NestedBlock{
 					"key": {
 						Nesting: configschema.NestingSingle,
+						Block: configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.String,
+									Optional: true,
+								},
+							},
+						},
+					},
+				},
+				SensitivePaths: &configschema.SensitivePathElement{
+					NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+						"key": &configschema.SensitivePathElement{
+							NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+								"name": configschema.NewSensitivePathLeaf(true),
+							},
+						},
+					},
+				},
+			},
+			cty.ObjectVal(map[string]cty.Value{
+				"key": cty.ObjectVal(
+					map[string]cty.Value{
+						"name": cty.StringVal("wotsit"),
+					},
+				),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"key": cty.ObjectVal(
+					map[string]cty.Value{
+						"name": cty.StringVal("thingy"),
+					},
+				),
+			}),
+			[]string{
+				`.key.name: inconsistency in sensitive value`,
+			},
+		},
+		{
+			&configschema.Block{
+				BlockTypes: map[string]*configschema.NestedBlock{
+					"key": {
+						Nesting: configschema.NestingSingle,
 						Block:   configschema.Block{},
 					},
 				},
@@ -840,6 +975,53 @@ func TestAssertObjectCompatible(t *testing.T) {
 				}),
 			}),
 			nil,
+		},
+		{
+			&configschema.Block{
+				BlockTypes: map[string]*configschema.NestedBlock{
+					"key": {
+						Nesting: configschema.NestingList,
+						Block: configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.String,
+									Optional: true,
+								},
+							},
+						},
+					},
+				},
+				SensitivePaths: &configschema.SensitivePathElement{
+					NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+						"key": &configschema.SensitivePathElement{
+							NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+								"name": configschema.NewSensitivePathLeaf(true),
+							},
+						},
+					},
+				},
+			},
+			cty.ObjectVal(map[string]cty.Value{
+				"key": cty.ListVal([]cty.Value{
+					cty.ObjectVal(
+						map[string]cty.Value{
+							"name": cty.StringVal("wotsit"),
+						},
+					),
+				}),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"key": cty.ListVal([]cty.Value{
+					cty.ObjectVal(
+						map[string]cty.Value{
+							"name": cty.StringVal("thingy"),
+						},
+					),
+				}),
+			}),
+			[]string{
+				`.key[0].name: inconsistency in sensitive value`,
+			},
 		},
 		{
 			&configschema.Block{
@@ -973,6 +1155,53 @@ func TestAssertObjectCompatible(t *testing.T) {
 				}),
 			}),
 			nil,
+		},
+		{
+			&configschema.Block{
+				BlockTypes: map[string]*configschema.NestedBlock{
+					"key": {
+						Nesting: configschema.NestingSet,
+						Block: configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.String,
+									Optional: true,
+								},
+							},
+						},
+					},
+				},
+				SensitivePaths: &configschema.SensitivePathElement{
+					NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+						"key": &configschema.SensitivePathElement{
+							NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+								"name": configschema.NewSensitivePathLeaf(true),
+							},
+						},
+					},
+				},
+			},
+			cty.ObjectVal(map[string]cty.Value{
+				"key": cty.SetVal([]cty.Value{
+					cty.ObjectVal(
+						map[string]cty.Value{
+							"name": cty.StringVal("wotsit"),
+						},
+					),
+				}),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"key": cty.SetVal([]cty.Value{
+					cty.ObjectVal(
+						map[string]cty.Value{
+							"name": cty.StringVal("thingy"),
+						},
+					),
+				}),
+			}),
+			[]string{
+				`.key: planned set element with sensitive information does not correlate with any element in actual`,
+			},
 		},
 		{
 			&configschema.Block{
@@ -1189,6 +1418,104 @@ func TestAssertObjectCompatible(t *testing.T) {
 			}),
 			nil,
 		},
+
+		// NestingMap Blocks
+		{
+			// Test sensitive information sanitization with NestingMap Block which is represented by a ObjectValue
+			&configschema.Block{
+				BlockTypes: map[string]*configschema.NestedBlock{
+					"key": {
+						Nesting: configschema.NestingMap,
+						Block: configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.String,
+									Optional: true,
+								},
+							},
+						},
+					},
+				},
+				SensitivePaths: &configschema.SensitivePathElement{
+					NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+						"key": &configschema.SensitivePathElement{
+							NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+								"name": configschema.NewSensitivePathLeaf(true),
+							},
+						},
+					},
+				},
+			},
+			cty.ObjectVal(map[string]cty.Value{
+				"key": cty.ObjectVal(map[string]cty.Value{
+					"myblock": cty.ObjectVal(
+						map[string]cty.Value{
+							"name": cty.StringVal("wotsit"),
+						},
+					),
+				}),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"key": cty.ObjectVal(map[string]cty.Value{
+					"myblock": cty.ObjectVal(
+						map[string]cty.Value{
+							"name": cty.StringVal("thingy"),
+						},
+					),
+				}),
+			}),
+			[]string{
+				`.key.myblock.name: inconsistency in sensitive value`,
+			},
+		},
+		{
+			// Test sensitive information sanitization with NestingMap Block which is represented by a MapValue
+			&configschema.Block{
+				BlockTypes: map[string]*configschema.NestedBlock{
+					"key": {
+						Nesting: configschema.NestingMap,
+						Block: configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.String,
+									Optional: true,
+								},
+							},
+						},
+					},
+				},
+				SensitivePaths: &configschema.SensitivePathElement{
+					NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+						"key": &configschema.SensitivePathElement{
+							NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+								"name": configschema.NewSensitivePathLeaf(true),
+							},
+						},
+					},
+				},
+			},
+			cty.ObjectVal(map[string]cty.Value{
+				"key": cty.MapVal(map[string]cty.Value{
+					"myblock": cty.ObjectVal(
+						map[string]cty.Value{
+							"name": cty.StringVal("wotsit"),
+						},
+					),
+				}),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"key": cty.MapVal(map[string]cty.Value{
+					"myblock": cty.ObjectVal(
+						map[string]cty.Value{
+							"name": cty.StringVal("thingy"),
+						},
+					),
+				}),
+			}),
+			[]string{
+				`.key["myblock"].name: inconsistency in sensitive value`,
+			},
+		},
 	}
 
 	for i, test := range tests {
@@ -1216,5 +1543,52 @@ func TestAssertObjectCompatible(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func CreateTestCaseForNestedSensitiveValue(t cty.Type, nestedPath string, plannedValue cty.Value, actualValue cty.Value) struct {
+	Schema   *configschema.Block
+	Planned  cty.Value
+	Actual   cty.Value
+	WantErrs []string
+} {
+	return struct {
+		Schema   *configschema.Block
+		Planned  cty.Value
+		Actual   cty.Value
+		WantErrs []string
+	}{
+		&configschema.Block{
+			Attributes: map[string]*configschema.Attribute{
+				"id": {
+					Type:     cty.String,
+					Computed: true,
+				},
+				"attribute": {
+					Type:     t,
+					Required: true,
+				},
+			},
+			SensitivePaths: &configschema.SensitivePathElement{
+				NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+					"attribute": {
+						NestedSensitivePathElements: map[string]*configschema.SensitivePathElement{
+							configschema.DynamicSensitivePathElementKey: configschema.NewSensitivePathLeaf(true),
+						},
+					},
+				},
+			},
+		},
+		cty.ObjectVal(map[string]cty.Value{
+			"id":        cty.UnknownVal(cty.String),
+			"attribute": plannedValue,
+		}),
+		cty.ObjectVal(map[string]cty.Value{
+			"id":        cty.UnknownVal(cty.String),
+			"attribute": actualValue,
+		}),
+		[]string{
+			".attribute" + nestedPath + `: inconsistency in sensitive value`,
+		},
 	}
 }
